@@ -1,0 +1,19 @@
+# ── 아직 올리지 않은 playground ───────────────────────────
+# 한 번에 다 올리지 않는다. 하나씩 검토하며 추가한다.
+# 추가할 때 해당 줄을 지우고 `git add <폴더>` 하면 된다.
+#
+# dynamodb / kubernetes 는 각자 로컬 .git 을 갖고 있다 (원격 없음, 미커밋 44건).
+# 올리는 순서가 오면 그때 하위 .git 을 정리하고 흡수한다.
+/dns-cache-playground/
+/dynamodb-playground/
+/eks-playground/
+/kubernetes-playground/
+/netty-playground/
+/postgres-tx-playground/
+
+# ── 공통 ─────────────────────────────────────────────────
+.DS_Store
+.idea/
+*.iml
+*.iws
+.vscode/
