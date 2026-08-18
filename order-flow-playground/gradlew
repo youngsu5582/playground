@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 목적: 저장소 루트에서도 ./gradlew 가 동작하게 한다.
+#
+# 실제 Gradle 빌드는 app/ 에만 있다 (settings.gradle 이 거기 있다).
+# 루트에서 ./gradlew s1 을 치면 Gradle 은 CWD 를 프로젝트 루트로 보고
+#   "Directory '...' does not contain a Gradle build"
+# 로 죽는다. 60분 타임박스를 이런 데 쓰지 않으려고 얇은 위임 스크립트를 둔다.
+#
+# 사용:
+#   ./gradlew s1              # 루트에서 — 이제 됨
+#   cd app && ./gradlew s1    # 기존 방식도 그대로 동작 (app/gradlew 는 진짜 wrapper)
+#
+# 주의: 인자의 상대 경로는 app/ 기준으로 해석된다.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${ROOT_DIR}/app"
+exec ./gradlew "$@"

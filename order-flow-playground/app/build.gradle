@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.playground'
+version = '0.0.1'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// 의도적으로 순수 Java + JUnit 뿐이다.
+// Spring / DB / 메시지 브로커를 붙이는 순간 60분 안에 끝나지 않고,
+// 드릴의 목적(도메인 규칙을 자료구조로 표현하기)이 인프라 설정에 묻힌다.
+// "그럼 실서비스에선?" 은 코드가 아니라 docs/ 의 확장 질문으로 답한다.
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core:3.27.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'short'
+    }
+}
+
+// 스테이지별 실행: ./gradlew s1  (= --tests 'playground.orderflow.stage1.*')
+['1', '2', '3', '4', '5'].each { n ->
+    tasks.register("s${n}", Test) {
+        group = 'verification'
+        description = "stage${n} 테스트만 실행"
+        useJUnitPlatform()
+        filter { includeTestsMatching "playground.orderflow.stage${n}.*" }
+        testLogging {
+            events 'passed', 'skipped', 'failed'
+            exceptionFormat = 'short'
+        }
+        outputs.upToDateWhen { false }
+    }
+}
