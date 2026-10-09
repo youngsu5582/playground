@@ -1,0 +1,17 @@
+{
+  "name": "command-log",
+  "version": "0.1.0",
+  "description": "Claude 가 실행한 Bash 명령을 패널(/command-log)과 상태줄에 보여주고, gh 로 GitHub 에 쓰는 명령은 실행 전에 묻는다",
+  "author": {
+    "name": "youngsu5582"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "askGhWrite": {
+      "type": "boolean",
+      "title": "gh 쓰기 전에 묻기",
+      "description": "gh 로 PR 코멘트 · 이슈 생성 같은 쓰기를 하기 전에 권한 프롬프트를 띄운다",
+      "default": true
+    }
+  }
+}
