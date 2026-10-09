@@ -1,6 +1,0 @@
-{
-  "name": "claude-mod-playground",
-  "description": "Claude Code Mod 예제",
-  "owner": { "name": "youngsu5582" },
-  "plugins": [{ "name": "command-log", "source": "./command-log" }]
-}

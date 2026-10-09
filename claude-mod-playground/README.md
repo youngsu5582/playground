@@ -18,10 +18,10 @@ claude --plugin-dir ./command-log
 세션에서 `/command-log` 를 치면 패널이 열린다. 닫기는 `/command-log off`.
 `--plugin-dir` 로 연 동안에는 파일을 고칠 때마다 다시 읽는다.
 
-설치해서 쓰려면 이 폴더를 marketplace 로 쓴다. 세션 프롬프트에 입력한다.
+설치해서 쓰려면 세션 프롬프트에 입력한다. 저장소 루트의 `.claude-plugin/marketplace.json` 이 설치 목록이다.
 
 ```
-/plugin install command-log --marketplace <이 폴더의 절대 경로>
+/plugin install command-log --marketplace youngsu5582/playground
 ```
 
 테스트는 [TESTING.md](TESTING.md).
@@ -39,7 +39,6 @@ claude --plugin-dir ./command-log
 
 ```
 claude-mod-playground/
-├── .claude-plugin/marketplace.json   # 이 폴더를 설치 목록으로 만든다
 ├── command-log/                      # mod 본체
 │   ├── .claude-plugin/plugin.json    # 이름 · 설명 · 사용자 설정(askGhWrite)
 │   ├── hooks/hooks.json              # 어느 코드 파일을 읽을지
