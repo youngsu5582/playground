@@ -5,8 +5,8 @@
 기준은 "**내가 직접 돌려보고 관찰해서 깨달을 수 있는가**" 하나다.
 새 playground를 시작할 때 이 문서를 따른다. (원칙: **가볍게 + 하나씩** — 무거운 프레임워크 금지)
 
-> 학습 철학은 상위 [`CLAUDE.md`](CLAUDE.md) 참조 (하나씩만 / output 중심 / 완료기준 / 피드백 짧게).
-> 레퍼런스 구현: [`dynamodb-playground/`](dynamodb-playground/).
+> 학습 철학: 하나씩만 / output 중심 / 완료기준 / 피드백 짧게.
+> 레퍼런스 구현: [`order-flow-playground/`](order-flow-playground/).
 
 ---
 
