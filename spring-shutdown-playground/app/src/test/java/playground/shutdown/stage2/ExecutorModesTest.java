@@ -53,7 +53,7 @@ import static playground.shutdown.support.TimelineQuery.threadOf;
  * <pre>
  * "  task a1 시작" / "끝" / "interrupt 됨"   풀 안의 작업 a1 이 시작·끝·interrupt 된 때
  * "  submit b1" / "  submit b1 거절됨"        풀에 b1 을 넘긴 때 / 거절된 때
- * "② pool-a lifecycle stop 시작"              ② 에서 pool-a 의 stop(callback) 이 불린 때
+ * "② pool-a lifecycle stop 시작"              ② 에서 pool-a 의 stop(callback) 이 불린 때 (pool-b 도 같은 형식)
  * "② pool-a lifecycle stop 완료"              pool-a 가 그 callback 을 부른 때 (= pool-a 의 stop 이 끝났다고 알린 때)
  * "② redis(phase 0) stop"                     ② 에서 Redis 가 멈춘 때
  * "③ destroy 단계 시작 (marker)"              ③ 이 시작된 때 (가장 나중에 만든 빈이 가장 먼저 destroy 된다)
@@ -128,20 +128,22 @@ class ExecutorModesTest {
         @Test
         @DisplayName("T-04d 종료가 시작된 뒤에 넘긴 작업은 거절되나")
         void acceptsTaskSubmittedDuringShutdown() throws InterruptedException {
-            // 상황: pool-a 의 작업이 "② pool-a lifecycle stop 시작" 을 기다렸다가 pool-b 에 b1 을 넘긴다
+            // 상황: pool-a 의 작업이 "② pool-a lifecycle stop 시작" 을 기다렸다가 pool-b 에 500ms 짜리 b1 을 넘긴다
             AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(DefaultConfig.class);
             TracingThreadPoolTaskExecutor poolA = context.getBean("poolA", TracingThreadPoolTaskExecutor.class);
             TracingThreadPoolTaskExecutor poolB = context.getBean("poolB", TracingThreadPoolTaskExecutor.class);
             Tasks.submit(poolA, "a1", () -> {
                 Timeline.record("  task a1 시작");
                 awaitQuietly("② pool-a lifecycle stop 시작");
-                Tasks.submit(poolB, "b1", Tasks.sleeping("b1", 10));
+                Tasks.submit(poolB, "b1", Tasks.sleeping("b1", 500));
             });
             Timeline.awaitEvent("  task a1 시작", WAIT);
 
             Shutdown.closeAndSettle(context);
 
             assertThat(submit("b1")).isEqualTo(Submission.ACCEPTED);   // Q1 종료가 ② 까지 온 뒤 pool-b 에 넘긴 b1 은
+            assertThat(order("② pool-b lifecycle stop 완료", "  submit b1")).isEqualTo(Order.BEFORE);   // Q2 b1 을 넘긴 건 pool-b 의 stop 이 끝나기 전인가 후인가
+            assertThat(happened("  task b1 끝")).isEqualTo(false);   // Q3 접수된 b1(500ms) 은 끝까지 도나
         }
     }
 
