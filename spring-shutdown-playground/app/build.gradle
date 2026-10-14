@@ -1,0 +1,71 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.playground'
+version = '0.0.1'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Spring Boot 없이 spring-context 만 쓴다.
+// Boot 는 종료 hook·프로퍼티를 대신 붙여 주는데, 여기서는 그 아래에서 Spring 이 실제로 무엇을 하는지를 본다.
+// 버전은 Spring Boot 3.5.x 가 쓰는 조합에 맞췄다 (executor lifecycle 은 Framework 6.1+, Lettuce lifecycle 은 Data Redis 3.2+).
+dependencies {
+    implementation 'org.springframework:spring-context:6.2.19'
+    implementation 'jakarta.annotation:jakarta.annotation-api:2.1.1'   // @PreDestroy
+    implementation 'ch.qos.logback:logback-classic:1.5.18'
+
+    // stage5 에서만 쓴다: 진짜 LettuceConnectionFactory + Redis 컨테이너
+    testImplementation 'org.springframework.data:spring-data-redis:3.5.12'
+    testImplementation 'io.lettuce:lettuce-core:6.6.0.RELEASE'
+    testImplementation 'org.testcontainers:testcontainers:1.21.4'
+    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core:3.27.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'playground.shutdown.demo.SigtermDemo'
+}
+
+// Spring 6.1+ 는 생성자·@Bean 파라미터 이름을 -parameters 로만 읽는다
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'short'
+    }
+}
+
+// 스테이지별 실행: ./gradlew s1  (= --tests 'playground.shutdown.stage1.*')
+// 타임라인을 눈으로 보려고 표준 출력을 그대로 보여 준다.
+['1', '2', '3', '4', '5'].each { n ->
+    tasks.register("s${n}", Test) {
+        group = 'verification'
+        description = "stage${n} 테스트만 실행"
+        useJUnitPlatform()
+        filter { includeTestsMatching "playground.shutdown.stage${n}.*" }
+        testLogging {
+            events 'passed', 'skipped', 'failed'
+            exceptionFormat = 'short'
+            showStandardStreams = true
+        }
+        outputs.upToDateWhen { false }
+    }
+}

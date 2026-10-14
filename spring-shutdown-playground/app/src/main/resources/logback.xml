@@ -1,0 +1,33 @@
+<configuration>
+    <!-- Spring 자신이 남기는 종료 로그: "Stopping beans in phase …", "Shutting down ExecutorService …" -->
+    <appender name="SPRING" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>             spring  [%thread] %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 이 playground 가 남기는 타임라인: [경과ms] [스레드] 이벤트 -->
+    <appender name="TIMELINE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>timeline %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="timeline" level="INFO" additivity="false">
+        <appender-ref ref="TIMELINE"/>
+    </logger>
+
+    <logger name="org.springframework.context.support.DefaultLifecycleProcessor" level="DEBUG" additivity="false">
+        <appender-ref ref="SPRING"/>
+    </logger>
+    <logger name="org.springframework.scheduling.concurrent" level="DEBUG" additivity="false">
+        <appender-ref ref="SPRING"/>
+    </logger>
+
+    <logger name="org.testcontainers" level="WARN"/>
+    <logger name="io.lettuce" level="WARN"/>
+
+    <root level="WARN">
+        <appender-ref ref="SPRING"/>
+    </root>
+</configuration>
