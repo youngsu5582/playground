@@ -37,12 +37,16 @@ import static playground.shutdown.support.TimelineQuery.threadOf;
  *  ① CONTEXT_CLOSED_EVENT  ContextClosedEvent 를 리스너에게 알린다. 아직 아무것도 멈추지 않는다
  *  ② LIFECYCLE_STOP        SmartLifecycle 의 stop() 을 phase 가 큰 빈부터 부른다
  *                          같은 phase 는 한 묶음이고, 묶음마다 timeout(여기선 1초)까지 callback 을 기다린다
- *  ③ BEAN_DESTROY          @PreDestroy · DisposableBean · close() 를 만든 역순으로, close 를 부른 스레드 하나가 차례로 부른다
+ *                          같은 묶음 안에서는 다른 빈에 의존하는 빈을 먼저 멈춘다
+ *  ③ BEAN_DESTROY          @PreDestroy · DisposableBean · close() 를 close 를 부른 스레드 하나가 차례로 부른다
+ *                          다른 빈에 의존하는 빈이 먼저, 그 외에는 만든 역순이다
  * </pre>
  *
  * <h2>이 컨텍스트의 빈 — {@link ScenarioConfig}</h2>
  * <pre>
- * pool-a, pool-b  ThreadPoolTaskExecutor. 스레드 1개 + 대기열 10칸. SmartLifecycle phase = MAX/2
+ * pool-a, pool-b  ThreadPoolTaskExecutor. 스레드 1개 + 대기열 10칸
+ *                 둘 다 SmartLifecycle phase = MAX/2 라서 ② 에서 같은 묶음으로 함께 stop 된다
+ *                 pool-b 는 pool-a 에 의존한다 (@DependsOn("poolA"))
  * redis           가짜 Redis. SmartLifecycle phase 0. stop 뒤에는 연결을 거절한다 (Lettuce 흉내)
  * mq              가짜 MQ. SmartLifecycle phase MIN. stop 때 끊고 다음 요청 때 재연결한다 (Rabbit 흉내)
  * dataSource      가짜 DB. Lifecycle 없음. destroy 때만 닫힌다 (Hikari 흉내)
