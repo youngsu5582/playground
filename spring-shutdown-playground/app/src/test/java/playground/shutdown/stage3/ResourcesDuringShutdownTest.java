@@ -16,6 +16,8 @@ import playground.shutdown.executor.TracingThreadPoolTaskExecutor;
 import playground.shutdown.resource.FakeDataSource;
 import playground.shutdown.resource.FakeMqConnectionFactory;
 import playground.shutdown.resource.FakeRedisConnectionFactory;
+import playground.shutdown.support.Order;
+import playground.shutdown.support.Outcome;
 import playground.shutdown.support.Probe;
 import playground.shutdown.support.ScenarioConfig;
 import playground.shutdown.support.Shutdown;
@@ -31,18 +33,31 @@ import static playground.shutdown.support.TimelineQuery.order;
 import static playground.shutdown.support.TimelineQuery.result;
 
 /**
- * stage3: 풀이 남은 작업을 처리하는 시점에, 그 작업이 쓰는 자원이 아직 살아 있는가를 예측한다.
- * probe 는 "풀이 기다리기 시작한 순간" 에 Redis·MQ·DB 를 한 번씩 쓴다.
+ * stage3: 풀이 남은 작업을 기다리기 시작한 순간에, 그 작업이 쓰는 자원이 아직 살아 있는가를 예측한다.
  *
+ * <h2>무엇을 하나</h2>
+ * pool-a 에 probe 작업 하나를 넣고 close() 를 부른다. probe 는 테스트마다 정한 이벤트(= 풀이 기다리기 시작한 순간)가 찍힐 때까지
+ * 기다렸다가, 200ms 일한 뒤 Redis·MQ·DB 를 한 번씩 써 본다. 결과는 {@code result("redis")} 처럼 꺼낸다.
+ *
+ * <h2>자원 — 종료 단계는 stage2 머리말과 {@link playground.shutdown.support.Stage} 참고</h2>
  * <pre>
- * Redis(Lettuce 흉내)   SmartLifecycle phase 0 에서 멈춤, 이후 거절
- * MQ(Rabbit 흉내)       SmartLifecycle phase MIN 에서 끊음, 다음 요청 때 재연결, 자기 destroy 뒤 거부
- * DB(Hikari 흉내)       Lifecycle 없음, ③ destroy 에서만 닫힘
- *
- * 보기: result → "성공" "실패" "없음" · order → "먼저" "나중" · happened → true/false
+ * redis       SmartLifecycle phase 0. ② 에서 멈추고, 그 뒤로는 연결을 거절한다 (Lettuce 흉내)
+ * mq          SmartLifecycle phase MIN. ② 에서 연결을 끊지만, 다음 요청이 오면 다시 연결한다. 자기 destroy 뒤로는 거부 (Rabbit 흉내)
+ * dataSource  Lifecycle 없음. ③ 에서 close() 로만 닫힌다 (Hikari 흉내)
+ * 풀          ThreadPoolTaskExecutor phase MAX/2. 설정에 따라 ② 또는 ③ 에서 기다린다 (stage2)
+ * 만든 순서   redis · mq · dataSource → pool-a → pool-b → destroyMarker   (T-07c 만 다르다)
  * </pre>
  *
- * <p>규칙: 실행하기 전에 {@code todo()} 를 내 예측값으로 바꾼다. 답지는 docs/04 와 git 이전 커밋에 있다.
+ * <h2>질문이 가리키는 타임라인 이벤트</h2>
+ * <pre>
+ * "  mq 재연결"               mq 가 끊긴 연결을 다시 맺은 때
+ * "③ db close"                dataSource 가 닫힌 때
+ * "③ pool-a destroy 시작"     ③ 에서 pool-a 의 destroy() 가 불린 때
+ * "  probe 끝"                probe 가 자원을 다 써 본 때
+ * "② redis(phase 0) stop"     Redis 가 멈춘 때
+ * </pre>
+ *
+ * <p>규칙: 실행하기 전에 {@code todo()} 를 내 예측으로 바꾼다. 보기는 {@link Outcome} · {@link Order} enum 이다.
  */
 class ResourcesDuringShutdownTest {
 
@@ -54,53 +69,58 @@ class ResourcesDuringShutdownTest {
     }
 
     @Test
-    @DisplayName("T-07a 기본값: 풀이 ② MAX/2 에서 기다리는 순간 자원은")
+    @DisplayName("T-07a 기본값: 풀이 ② 에서 기다리기 시작한 순간 자원은")
     void defaultMode() throws InterruptedException {
+        // 상황: 기본값 풀. probe 는 "② pool-a lifecycle stop 시작" 에서 깨어난다
         runProbe(DefaultConfig.class, "② pool-a lifecycle stop 시작");
 
-        assertThat(result("redis")).isEqualTo(todo());   // Q1
-        assertThat(result("mq")).isEqualTo(todo());   // Q2
-        assertThat(result("db")).isEqualTo(todo());   // Q3
+        assertThat(result("redis")).isEqualTo(Outcome.SUCCESS);   // Q1 Redis 는
+        assertThat(result("mq")).isEqualTo(Outcome.SUCCESS);   // Q2 MQ 는
+        assertThat(result("db")).isEqualTo(Outcome.SUCCESS);   // Q3 DB 는
     }
 
     @Test
-    @DisplayName("T-07b PR 설정: 풀이 ③ destroy 에서 기다리는 순간 자원은")
+    @DisplayName("T-07b PR 설정: 풀이 ③ 에서 기다리기 시작한 순간 자원은")
     void waitForTasksMode() throws InterruptedException {
+        // 상황: waitForTasksToCompleteOnShutdown(true) 풀. probe 는 "③ pool-a destroy 시작" 에서 깨어난다
         runProbe(WaitForTasksConfig.class, "③ pool-a destroy 시작");
 
-        assertThat(result("redis")).isEqualTo(todo());   // Q1
-        assertThat(result("mq")).isEqualTo(todo());   // Q2
-        assertThat(happened("  mq 재연결")).isEqualTo(todo());   // Q3 mq 는 재연결을 하나
-        assertThat(result("db")).isEqualTo(todo());   // Q4
+        assertThat(result("redis")).isEqualTo(Outcome.FAILURE);   // Q1 Redis 는
+        assertThat(result("mq")).isEqualTo(Outcome.SUCCESS);   // Q2 MQ 는
+        assertThat(happened("  mq 재연결")).isEqualTo(true);   // Q3 MQ 는 재연결을 하나
+        assertThat(result("db")).isEqualTo(Outcome.SUCCESS);   // Q4 DB 는
     }
 
     @Test
     @DisplayName("T-07c PR 설정 + DataSource 를 풀보다 늦게 만들면 자원은")
     void waitForTasksModeWithDataSourceCreatedLater() throws InterruptedException {
+        // 상황: T-07b 와 같지만 만든 순서가 redis · mq → pool-a → dataSource 다
         runProbe(DataSourceCreatedLaterConfig.class, "③ pool-a destroy 시작");
 
-        assertThat(order("③ db close", "③ pool-a destroy 시작")).isEqualTo(todo());   // Q1 DB 가 닫히는 건 풀 destroy 보다 먼저인가 나중인가
-        assertThat(result("db")).isEqualTo(todo());   // Q2
-        assertThat(result("redis")).isEqualTo(todo());   // Q3
+        assertThat(order("③ db close", "③ pool-a destroy 시작")).isEqualTo(Order.BEFORE);   // Q1 DB 가 닫히는 건 pool-a 의 destroy 보다 먼저인가 나중인가
+        assertThat(result("db")).isEqualTo(Outcome.FAILURE);   // Q2 DB 는
+        assertThat(result("redis")).isEqualTo(Outcome.FAILURE);   // Q3 Redis 는
     }
 
     @Test
-    @DisplayName("T-07d PR 플래그 + ShutdownFirstDrain: drain 이 비우는 순간 자원은")
+    @DisplayName("T-07d PR 플래그 + ShutdownFirstDrain: drain 이 풀을 비우는 순간 자원은")
     void shutdownFirstDrain() throws InterruptedException {
+        // 상황: 풀은 PR 플래그(awaitTermination 없음) + ② 의 MAX/2-1 에 drain 이 있다. probe 는 drain 이 접수를 닫은 순간 깨어난다
         runProbe(ShutdownFirstDrainConfig.class, "② drain(shutdown 먼저) 접수 마감");
 
-        assertThat(result("redis")).isEqualTo(todo());   // Q1
-        assertThat(result("mq")).isEqualTo(todo());   // Q2
-        assertThat(result("db")).isEqualTo(todo());   // Q3
+        assertThat(result("redis")).isEqualTo(Outcome.SUCCESS);   // Q1 Redis 는
+        assertThat(result("mq")).isEqualTo(Outcome.SUCCESS);   // Q2 MQ 는
+        assertThat(result("db")).isEqualTo(Outcome.SUCCESS);   // Q3 DB 는
     }
 
     @Test
-    @DisplayName("T-07e PR 플래그 + IdleDrain: drain 이 비우는 순간 자원은 (IdleDrainLifecycle 을 구현해야 통과한다)")
+    @DisplayName("T-07e PR 플래그 + IdleDrain: drain 이 풀을 비우는 순간 자원은 (IdleDrainLifecycle 을 구현해야 통과한다)")
     void idleDrain() throws InterruptedException {
+        // 상황: T-07d 와 같지만 drain 이 IdleDrain 이다. probe 는 "② drain(idle 대기) 시작" 에서 깨어난다
         runProbe(IdleDrainConfig.class, "② drain(idle 대기) 시작");
 
-        assertThat(result("redis")).isEqualTo(todo());   // Q1
-        assertThat(order("  probe 끝", "② redis(phase 0) stop")).isEqualTo(todo());   // Q2 probe 가 끝나는 건 Redis 가 멈추기 먼저인가 나중인가
+        assertThat(result("redis")).isEqualTo(Outcome.SUCCESS);   // Q1 Redis 는
+        assertThat(order("  probe 끝", "② redis(phase 0) stop")).isEqualTo(Order.BEFORE);   // Q2 probe 가 끝나는 건 Redis 가 멈추기 전인가 후인가
     }
 
     /** pool-a 에 probe 를 넣고 컨텍스트를 닫는다. probe 는 waitForEvent 시점에 자원을 써 본다. */
