@@ -59,9 +59,9 @@ class ExecutorModesTest {
 
             Shutdown.closeAndSettle(context);
 
-            assertThat(stageOf("  task a1 끝")).isEqualTo("②");   // Q1 a1 은 어느 단계 안에서 끝나나
-            assertThat(order("  task a1 끝", "② redis(phase 0) stop")).isEqualTo("먼저");   // Q2 a1 이 끝나는 건 Redis 가 멈추기 먼저인가 나중인가
-            assertThat(threadOf("② pool-a lifecycle stop 완료")).isEqualTo("pool-a-1");   // Q3 pool-a 의 lifecycle stop 을 '완료' 시키는 스레드는
+            assertThat(stageOf("  task a1 끝")).isEqualTo(todo());   // Q1 a1 은 어느 단계 안에서 끝나나
+            assertThat(order("  task a1 끝", "② redis(phase 0) stop")).isEqualTo(todo());   // Q2 a1 이 끝나는 건 Redis 가 멈추기 먼저인가 나중인가
+            assertThat(threadOf("② pool-a lifecycle stop 완료")).isEqualTo(todo());   // Q3 pool-a 의 lifecycle stop 을 '완료' 시키는 스레드는
         }
 
         @Test
@@ -75,8 +75,8 @@ class ExecutorModesTest {
 
             Shutdown.closeAndSettle(context);
 
-            assertThat(secondsBetween("  task a1 시작", "② pool-a lifecycle stop 완료")).isEqualTo(0L);   // Q1 lifecycle stop 이 완료되기까지 몇 초 걸리나 (a2 까지 기다리면 2초)
-            assertThat(happened("  task a2 끝")).isEqualTo(false);   // Q2 대기열의 a2 는 끝까지 실행되나
+            assertThat(secondsBetween("  task a1 시작", "② pool-a lifecycle stop 완료")).isEqualTo(todo());   // Q1 lifecycle stop 이 완료되기까지 몇 초 걸리나 (a2 까지 기다리면 2초)
+            assertThat(happened("  task a2 끝")).isEqualTo(todo());   // Q2 대기열의 a2 는 끝까지 실행되나
         }
 
         @Test
@@ -90,8 +90,8 @@ class ExecutorModesTest {
             Timeline.record("close() 호출");
             Shutdown.closeAndSettle(context);
 
-            assertThat(secondsBetween("close() 호출", "③ pool-a destroy 시작")).isEqualTo(1L);   // Q1 close 부터 pool-a destroy 까지 몇 초
-            assertThat(stageOf("  task a1 interrupt 됨")).isEqualTo("③");   // Q2 a1 이 interrupt 되는 단계는
+            assertThat(secondsBetween("close() 호출", "③ pool-a destroy 시작")).isEqualTo(todo());   // Q1 close 부터 pool-a destroy 까지 몇 초
+            assertThat(stageOf("  task a1 interrupt 됨")).isEqualTo(todo());   // Q2 a1 이 interrupt 되는 단계는
         }
 
         @Test
@@ -109,7 +109,7 @@ class ExecutorModesTest {
 
             Shutdown.closeAndSettle(context);
 
-            assertThat(submit("b1")).isEqualTo("접수");   // Q1 ② 가 시작된 뒤 pool-b 에 넘긴 b1 은
+            assertThat(submit("b1")).isEqualTo(todo());   // Q1 ② 가 시작된 뒤 pool-b 에 넘긴 b1 은
         }
     }
 
@@ -130,11 +130,11 @@ class ExecutorModesTest {
 
             Shutdown.closeAndSettle(context);
 
-            assertThat(secondsBetween("② pool-a lifecycle stop 시작", "② pool-a lifecycle stop 완료")).isEqualTo(0L);   // Q1 ② 에서 몇 초 기다리나
-            assertThat(order("② redis(phase 0) stop", "  task a1 끝")).isEqualTo("먼저");   // Q2 Redis 가 멈추는 건 작업이 끝나기 먼저인가 나중인가
-            assertThat(order("③ pool-a destroy 시작", "③ pool-b destroy 시작")).isEqualTo("나중");   // Q3 pool-a 의 destroy 는 pool-b 보다 먼저인가 나중인가
-            assertThat(secondsBetween("③ pool-b destroy 시작", "③ pool-b destroy 끝")).isEqualTo(1L);   // Q4 pool-b 의 destroy 는 몇 초 걸리나
-            assertThat(happened("  task b1 interrupt 됨")).isEqualTo(false);   // Q5 1초 상한을 넘긴 b1 은 끊기나
+            assertThat(secondsBetween("② pool-a lifecycle stop 시작", "② pool-a lifecycle stop 완료")).isEqualTo(todo());   // Q1 ② 에서 몇 초 기다리나
+            assertThat(order("② redis(phase 0) stop", "  task a1 끝")).isEqualTo(todo());   // Q2 Redis 가 멈추는 건 작업이 끝나기 먼저인가 나중인가
+            assertThat(order("③ pool-a destroy 시작", "③ pool-b destroy 시작")).isEqualTo(todo());   // Q3 pool-a 의 destroy 는 pool-b 보다 먼저인가 나중인가
+            assertThat(secondsBetween("③ pool-b destroy 시작", "③ pool-b destroy 끝")).isEqualTo(todo());   // Q4 pool-b 의 destroy 는 몇 초 걸리나
+            assertThat(happened("  task b1 interrupt 됨")).isEqualTo(todo());   // Q5 1초 상한을 넘긴 b1 은 끊기나
         }
     }
 
@@ -157,7 +157,7 @@ class ExecutorModesTest {
 
             Shutdown.closeAndSettle(context);
 
-            assertThat(submit("b1")).isEqualTo("거절");   // Q1 ② 가 시작된 뒤 pool-b 에 넘긴 b1 은 (T-04d 와 비교)
+            assertThat(submit("b1")).isEqualTo(todo());   // Q1 ② 가 시작된 뒤 pool-b 에 넘긴 b1 은 (T-04d 와 비교)
         }
     }
 

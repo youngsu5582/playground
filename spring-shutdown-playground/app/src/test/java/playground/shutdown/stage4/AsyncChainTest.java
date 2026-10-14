@@ -50,8 +50,8 @@ class AsyncChainTest {
     void waitForTasksRejectsChainedTask() throws InterruptedException {
         runChain(WaitForTasksConfig.class, "③ pool-a destroy 시작");
 
-        assertThat(submit("B")).isEqualTo("거절");   // Q1
-        assertThat(result("B redis")).isEqualTo("없음");   // Q2
+        assertThat(submit("B")).isEqualTo(todo());   // Q1
+        assertThat(result("B redis")).isEqualTo(todo());   // Q2
     }
 
     @Test
@@ -59,7 +59,7 @@ class AsyncChainTest {
     void shutdownFirstDrainRejectsChainedTask() throws InterruptedException {
         runChain(ShutdownFirstDrainConfig.class, "② drain(shutdown 먼저) 접수 마감");
 
-        assertThat(submit("B")).isEqualTo("거절");   // Q1
+        assertThat(submit("B")).isEqualTo(todo());   // Q1
     }
 
     @Test
@@ -67,9 +67,9 @@ class AsyncChainTest {
     void idleDrainRunsChainedTask() throws InterruptedException {
         runChain(IdleDrainConfig.class, "② drain(idle 대기) 시작");
 
-        assertThat(submit("B")).isEqualTo("접수");   // Q1
-        assertThat(result("B redis")).isEqualTo("성공");   // Q2
-        assertThat(order("  B redis", "② redis(phase 0) stop")).isEqualTo("먼저");   // Q3 B 의 Redis 호출은 Redis 가 멈추기 먼저인가 나중인가
+        assertThat(submit("B")).isEqualTo(todo());   // Q1
+        assertThat(result("B redis")).isEqualTo(todo());   // Q2
+        assertThat(order("  B redis", "② redis(phase 0) stop")).isEqualTo(todo());   // Q3 B 의 Redis 호출은 Redis 가 멈추기 먼저인가 나중인가
     }
 
     @Test
@@ -77,8 +77,8 @@ class AsyncChainTest {
     void defaultModeDoesNotWaitForChainedTask() throws InterruptedException {
         runChain(DefaultConfig.class, "② pool-a lifecycle stop 시작");
 
-        assertThat(submit("B")).isEqualTo("접수");   // Q1
-        assertThat(result("B redis")).isEqualTo("없음");   // Q2 B 는 Redis 까지 가나 (lifecycle 이 B 를 기다려 주나)
+        assertThat(submit("B")).isEqualTo(todo());   // Q1
+        assertThat(result("B redis")).isEqualTo(todo());   // Q2 B 는 Redis 까지 가나 (lifecycle 이 B 를 기다려 주나)
     }
 
     /**

@@ -73,6 +73,7 @@ class RealLettuceTest {
                 Thread.currentThread().interrupt();
                 return;
             }
+            Tasks.sleepQuietly(200);   // 실제 작업처럼 시간이 걸린다. 누군가 기다려 주지 않으면 그사이 Redis 가 멈춘다
             Tasks.attempt("real redis", () -> redisTemplate.opsForValue().get("k"));
         });
         Timeline.awaitEvent("  probe 대기", Duration.ofSeconds(5));

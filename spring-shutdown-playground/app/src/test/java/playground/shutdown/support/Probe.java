@@ -28,6 +28,8 @@ public final class Probe {
                 Thread.currentThread().interrupt();
                 return;
             }
+            // 실제 작업처럼 시간이 걸린다. 누군가 기다려 주지 않으면 그사이 Redis 가 멈춘다
+            Tasks.sleepQuietly(200);
             Tasks.attempt("redis", () -> redis.get("k"));
             Tasks.attempt("mq", () -> mq.publish("m"));
             Tasks.attempt("db", db::query);

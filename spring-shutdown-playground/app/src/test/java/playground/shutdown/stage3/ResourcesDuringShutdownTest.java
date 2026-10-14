@@ -58,9 +58,9 @@ class ResourcesDuringShutdownTest {
     void defaultMode() throws InterruptedException {
         runProbe(DefaultConfig.class, "② pool-a lifecycle stop 시작");
 
-        assertThat(result("redis")).isEqualTo("성공");   // Q1
-        assertThat(result("mq")).isEqualTo("성공");   // Q2
-        assertThat(result("db")).isEqualTo("성공");   // Q3
+        assertThat(result("redis")).isEqualTo(todo());   // Q1
+        assertThat(result("mq")).isEqualTo(todo());   // Q2
+        assertThat(result("db")).isEqualTo(todo());   // Q3
     }
 
     @Test
@@ -68,10 +68,10 @@ class ResourcesDuringShutdownTest {
     void waitForTasksMode() throws InterruptedException {
         runProbe(WaitForTasksConfig.class, "③ pool-a destroy 시작");
 
-        assertThat(result("redis")).isEqualTo("실패");   // Q1
-        assertThat(result("mq")).isEqualTo("성공");   // Q2
-        assertThat(happened("  mq 재연결")).isEqualTo(true);   // Q3 mq 는 재연결을 하나
-        assertThat(result("db")).isEqualTo("성공");   // Q4
+        assertThat(result("redis")).isEqualTo(todo());   // Q1
+        assertThat(result("mq")).isEqualTo(todo());   // Q2
+        assertThat(happened("  mq 재연결")).isEqualTo(todo());   // Q3 mq 는 재연결을 하나
+        assertThat(result("db")).isEqualTo(todo());   // Q4
     }
 
     @Test
@@ -79,9 +79,9 @@ class ResourcesDuringShutdownTest {
     void waitForTasksModeWithDataSourceCreatedLater() throws InterruptedException {
         runProbe(DataSourceCreatedLaterConfig.class, "③ pool-a destroy 시작");
 
-        assertThat(order("③ db close", "③ pool-a destroy 시작")).isEqualTo("먼저");   // Q1 DB 가 닫히는 건 풀 destroy 보다 먼저인가 나중인가
-        assertThat(result("db")).isEqualTo("실패");   // Q2
-        assertThat(result("redis")).isEqualTo("실패");   // Q3
+        assertThat(order("③ db close", "③ pool-a destroy 시작")).isEqualTo(todo());   // Q1 DB 가 닫히는 건 풀 destroy 보다 먼저인가 나중인가
+        assertThat(result("db")).isEqualTo(todo());   // Q2
+        assertThat(result("redis")).isEqualTo(todo());   // Q3
     }
 
     @Test
@@ -89,9 +89,9 @@ class ResourcesDuringShutdownTest {
     void shutdownFirstDrain() throws InterruptedException {
         runProbe(ShutdownFirstDrainConfig.class, "② drain(shutdown 먼저) 접수 마감");
 
-        assertThat(result("redis")).isEqualTo("성공");   // Q1
-        assertThat(result("mq")).isEqualTo("성공");   // Q2
-        assertThat(result("db")).isEqualTo("성공");   // Q3
+        assertThat(result("redis")).isEqualTo(todo());   // Q1
+        assertThat(result("mq")).isEqualTo(todo());   // Q2
+        assertThat(result("db")).isEqualTo(todo());   // Q3
     }
 
     @Test
@@ -99,8 +99,8 @@ class ResourcesDuringShutdownTest {
     void idleDrain() throws InterruptedException {
         runProbe(IdleDrainConfig.class, "② drain(idle 대기) 시작");
 
-        assertThat(result("redis")).isEqualTo("성공");   // Q1
-        assertThat(order("  probe 끝", "② redis(phase 0) stop")).isEqualTo("먼저");   // Q2 probe 가 끝나는 건 Redis 가 멈추기 먼저인가 나중인가
+        assertThat(result("redis")).isEqualTo(todo());   // Q1
+        assertThat(order("  probe 끝", "② redis(phase 0) stop")).isEqualTo(todo());   // Q2 probe 가 끝나는 건 Redis 가 멈추기 먼저인가 나중인가
     }
 
     /** pool-a 에 probe 를 넣고 컨텍스트를 닫는다. probe 는 waitForEvent 시점에 자원을 써 본다. */

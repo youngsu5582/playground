@@ -31,4 +31,4 @@ else
 fi
 echo
 echo "  테스트 하나:  ./gradlew s2 --tests '*waitsForRunningTaskInLifecycle'"
-echo "  정답 보기:    git diff HEAD~1 -- app/src   (막혔을 때만)"
+echo "  정답 보기:    git diff spring-shutdown-answers -- app/src   (막혔을 때만, 이 폴더에서)"
