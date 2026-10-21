@@ -86,6 +86,29 @@ class ShutdownStagesTest {
         assertThat(millisBetween("② stuck(phase 100) stop 시작", "② stop phase=0 after-stuck")).isGreaterThanOrEqualTo(450);
     }
 
+    @Test
+    @DisplayName("T-03b 의존하는 빈은 자기 phase 가 더 작아도, 의존 대상이 멈추기 직전에 먼저 멈춘다")
+    void dependentStopsBeforeItsPhase() {
+        AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(DependentStopConfig.class);
+        Timeline.reset();
+
+        context.close();
+
+        inOrder("② stop phase=-1000 dependent", "② stop phase=1000 target", "② stop phase=0 middle");
+    }
+
+    @Test
+    @DisplayName("T-03c 당겨진 빈의 stop 이 비동기면, 대상 빈과 다음 phase 는 그 빈이 다 멈추기를 기다리지 않는다")
+    void dependentAsyncStopIsNotAwaited() {
+        AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(DependentAsyncStopConfig.class);
+        Timeline.reset();
+
+        context.close();
+        Tasks.sleepQuietly(500); // 다른 스레드에서 끝나는 stop 의 기록을 마저 모은다
+
+        inOrder("② stop 시작 phase=-1000 dependent", "② stop phase=1000 target", "② stop phase=0 middle", "② stop 끝 phase=-1000 dependent");
+    }
+
     // ---------------------------------------------------------------- 구성
 
     @Configuration
@@ -171,6 +194,48 @@ class ShutdownStagesTest {
         @Bean
         public PhasedBean afterStuck() {
             return new PhasedBean("after-stuck", 0);
+        }
+    }
+
+    @Configuration
+    static class DependentStopConfig {
+
+        @Bean
+        public PhasedBean target() {
+            return new PhasedBean("target", 1000);
+        }
+
+        @Bean
+        public PhasedBean middle() {
+            return new PhasedBean("middle", 0);
+        }
+
+        // phase 는 가장 작지만 target 에 의존한다
+        @Bean
+        @DependsOn("target")
+        public PhasedBean dependent() {
+            return new PhasedBean("dependent", -1000);
+        }
+    }
+
+    @Configuration
+    static class DependentAsyncStopConfig {
+
+        @Bean
+        public PhasedBean target() {
+            return new PhasedBean("target", 1000);
+        }
+
+        @Bean
+        public PhasedBean middle() {
+            return new PhasedBean("middle", 0);
+        }
+
+        // T-03b 와 같은 의존이지만 stop 을 다른 스레드에서 300ms 뒤에 끝낸다
+        @Bean
+        @DependsOn("target")
+        public AsyncStopBean dependent() {
+            return new AsyncStopBean("dependent", -1000, 300);
         }
     }
 
@@ -262,6 +327,52 @@ class ShutdownStagesTest {
             Timeline.record("③ " + name + " destroy 시작");
             Tasks.sleepQuietly(300);
             Timeline.record("③ " + name + " destroy 끝");
+        }
+    }
+
+    /** stop(callback) 을 다른 스레드에서 늦게 끝낸다. stop 이 비동기일 때 기다려 주는지 보려는 빈. 시작과 끝을 따로 남긴다. */
+    static class AsyncStopBean implements SmartLifecycle {
+
+        private final String name;
+        private final int phase;
+        private final long stopMillis;
+        private volatile boolean running;
+
+        AsyncStopBean(String name, int phase, long stopMillis) {
+            this.name = name;
+            this.phase = phase;
+            this.stopMillis = stopMillis;
+        }
+
+        @Override
+        public void start() {
+            running = true;
+        }
+
+        @Override
+        public void stop() {
+            stop(() -> { });
+        }
+
+        @Override
+        public void stop(Runnable callback) {
+            Timeline.record("② stop 시작 phase=" + phase + " " + name);
+            new Thread(() -> {
+                Tasks.sleepQuietly(stopMillis);
+                running = false;
+                Timeline.record("② stop 끝 phase=" + phase + " " + name);
+                callback.run();
+            }, "async-stop").start();
+        }
+
+        @Override
+        public boolean isRunning() {
+            return running;
+        }
+
+        @Override
+        public int getPhase() {
+            return phase;
         }
     }
 

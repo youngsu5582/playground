@@ -45,18 +45,41 @@ public class IdleDrainLifecycle implements SmartLifecycle {
     public void stop() {
         Timeline.record("② drain(idle 대기) 시작");
 
-        // TODO 직접 구현한다
-        //   통과 기준: ./gradlew s3 --tests '*idleDrain'  ·  ./gradlew s4 --tests '*idleDrainRunsChainedTask'
-        //              ./gradlew s5 --tests '*idleDrainWithRealLettuce'
-        //
-        //   1. 접수는 닫지 않는다. 비우는 도중 넘어오는 체인 작업도 받아야 한다 (T-08c).
-        //   2. 모든 풀이 "실행 중 0 + 대기열 0" 인지 주기적으로 확인한다.
-        //      힌트: pool.getThreadPoolExecutor().getActiveCount(), .getQueue().isEmpty()
-        //   3. 한 번 비어 보였다고 바로 끝내면 안 되는 경우가 있다. 언제일까? (대기열에서 막 꺼낸 작업은 어떻게 집계될까)
-        //   4. timeout 을 넘기면 포기하고 넘어간다. 그때는 아래 대신 "② drain(idle 대기) 시간 초과" 를 남긴다.
-        //   5. 정답과 비교: ShutdownFirstDrainLifecycle 은 무엇을 먼저 하고, 그래서 T-08b 에서 무엇이 거절되나
+        long deadline = System.nanoTime() + timeout.toNanos();
+        boolean idleOnce = false;
+        boolean drained = false;
 
-        Timeline.record("② drain(idle 대기) 끝");
+        try {
+            while (System.nanoTime() < deadline) {
+                if (allIdle()) {
+                    if (idleOnce) {
+                        drained = true; // 연속 두 번째 idle 관측
+                        break;
+                    }
+                    idleOnce = true;
+                } else {
+                    idleOnce = false;
+                }
+
+                Thread.sleep(10);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        Timeline.record(
+                drained ? "② drain(idle 대기) 끝"
+                        : "② drain(idle 대기) 시간 초과");
         running = false;
+    }
+
+    private boolean allIdle() {
+        return pools.stream().allMatch(
+                pool -> {
+                    // 처리중인게 없고, 큐에 대기하는 요소도 없다.
+                    var executor = pool.getThreadPoolExecutor();
+                    return executor.getActiveCount() == 0 && executor.getQueue().isEmpty();
+                }
+        );
     }
 }

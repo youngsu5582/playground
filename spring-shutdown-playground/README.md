@@ -13,8 +13,8 @@
 ## 규칙 — 예측 테스트
 
 ```java
-assertThat(stageOf("  task a1 끝")).isEqualTo(todo());   // Q1 a1 은 어느 단계 안에서 끝나나
-                                              // ↑ 실행 전에 내 예측("②" 등)으로 바꾼다
+assertThat(stageOf("  task a1 끝")).isEqualTo(todo());   // Q1 a1 이 끝나는 순간, 종료는 어느 단계에 있나
+                                              // ↑ 실행 전에 내 예측(Stage.LIFECYCLE_STOP 등)으로 바꾼다
 ```
 
 1. 테스트를 읽고 **기대값을 먼저 적는다.** `todo()` 를 그대로 두고 돌리면 "예측값을 아직 적지 않았다" 로 실패한다.
@@ -24,7 +24,19 @@ assertThat(stageOf("  task a1 끝")).isEqualTo(todo());   // Q1 a1 은 어느 �
    git diff spring-shutdown-answers -- app/src     # 이 폴더에서. todo() 자리의 정답과 IdleDrain 구현이 보인다
    ```
 
-보기는 각 테스트 클래스 상단 주석에 있다 (`"②"`, `"먼저"`, `"접수"`, `"성공"`, `1L`, `false` …).
+**문제 조건은 각 테스트 클래스 머리말에 있다.** 종료 단계(①②③)가 무엇을 하는지, 컨텍스트에 어떤 빈이 어떤 phase 로 있는지, 질문이 가리키는 이벤트 이름이 무슨 뜻인지를 먼저 읽는다.
+
+**보기는 enum 이다.** 자동완성으로 고르고, 상수에 마우스를 올리면 설명이 보인다.
+
+| 질문 | 답의 타입 | 보기 |
+|---|---|---|
+| `stageOf(event)` | `Stage` | `BEFORE_SHUTDOWN` · `CONTEXT_CLOSED_EVENT`(①) · `LIFECYCLE_STOP`(②) · `BEAN_DESTROY`(③) |
+| `order(a, b)` | `Order` | `BEFORE` · `AFTER` |
+| `threadOf(event)` | `ThreadRole` | `CLOSING_THREAD` · `POOL_A` · `POOL_B` · `SHUTDOWN_HOOK` |
+| `submit(name)` | `Submission` | `ACCEPTED` · `REJECTED` · `NOT_SUBMITTED` |
+| `result(name)` | `Outcome` | `SUCCESS` · `FAILURE` · `NOT_ATTEMPTED` |
+| `secondsBetween(a, b)` | `long` | 반올림한 정수 초 (`0L`, `1L` …) |
+| `happened(event)` | `boolean` | `true` · `false` |
 
 ## 학습 순서
 

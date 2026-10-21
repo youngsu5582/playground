@@ -13,6 +13,8 @@ T-ID 하나 = 질문 묶음 하나. 예측은 코드의 `todo()` 자리에 적�
 | **T-01b** | 관찰 | `@PreDestroy` · `DisposableBean.destroy()` · `destroyMethod` 순서 | `./gradlew s1 --tests '*destroyCallbacksInsideOneBean'` |
 | **T-02** | 관찰 | destroy 가 300ms 걸리는 빈 2개 — 동시인가 차례인가, 어느 스레드인가 | `./gradlew s1 --tests '*destroyIsSequentialOnClosingThread'` |
 | **T-03** | 관찰 | stop callback 을 안 부르는 빈이 있으면 다음 phase 는 언제 | `./gradlew s1 --tests '*phaseTimeoutMovesOn'` |
+| **T-03b** | 관찰 | phase −1000 빈이 phase 1000 빈에 의존하면 언제 멈추나 | `./gradlew s1 --tests '*dependentStopsBeforeItsPhase'` |
+| **T-03c** | 관찰 | T-03b 에서 당겨진 빈의 stop 이 비동기(300ms)면 대상 빈 · 다음 phase 는 기다리나 | `./gradlew s1 --tests '*dependentAsyncStopIsNotAwaited'` |
 | **T-04a** | 예측 | 기본값: 실행 중 작업(500ms)을 기다려 주나, 어디서 | `./gradlew s2 --tests '*waitsForRunningTaskInLifecycle'` |
 | **T-04b** | 예측 | 기본값: a1 실행 중 + a2 대기열 — a2 도 기다려 주나 | `./gradlew s2 --tests '*doesNotWaitForQueuedTask'` |
 | **T-04c** | 예측 | 기본값: phase timeout(1s)보다 긴 작업(3s)은 | `./gradlew s2 --tests '*interruptsTaskLongerThanPhaseTimeout'` |

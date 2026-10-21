@@ -17,7 +17,11 @@ public final class Probe {
     private Probe() {
     }
 
-    /** waitForEvent 가 타임라인에 찍힐 때까지 기다렸다가 Redis·MQ·DB 를 한 번씩 쓴다. */
+    /**
+     * waitForEvent 가 타임라인에 찍힐 때까지 기다린 뒤, 200ms 후 Redis·MQ·DB 를 한 번씩 호출하는 작업을 만든다.
+     * 여기서는 Runnable 만 만들고, 실제 실행은 Tasks.submit 으로 풀에 제출할 때 시작한다.
+     * 각 호출의 성공/실패는 Tasks.attempt 가 기록한다. 이벤트 대기 중 interrupt 되면 자원 호출 없이 끝난다.
+     */
     public static Runnable afterEvent(String waitForEvent, FakeRedisConnectionFactory redis, FakeMqConnectionFactory mq, FakeDataSource db) {
         return () -> {
             Timeline.record("  probe 대기: [" + waitForEvent + "] 까지");
