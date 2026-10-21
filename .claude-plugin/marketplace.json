@@ -1,0 +1,6 @@
+{
+  "name": "youngsu5582-playground",
+  "description": "playground 에서 직접 돌려 보며 만든 Claude Code 플러그인",
+  "owner": { "name": "youngsu5582" },
+  "plugins": [{ "name": "command-log", "source": "./claude-mod-playground/command-log" }]
+}
