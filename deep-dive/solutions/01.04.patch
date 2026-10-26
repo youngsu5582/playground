@@ -1,0 +1,175 @@
+--- a/01-concurrency-consistency/l04-stock-concurrency/src/main/java/deepdive/c01/l04/AtomicUpdateStockService.java
++++ b/01-concurrency-consistency/l04-stock-concurrency/src/main/java/deepdive/c01/l04/AtomicUpdateStockService.java
+@@ -37,15 +37,12 @@
+      */
+     @Override
+     public boolean reserve(String sku, int qty) {
+-        try (Connection c = db.get()) {
+-            StockTable.Row row = StockTable.read(c, sku, false);
+-            if (row == null || row.qty() < qty) return false;
+-            try (PreparedStatement ps = c.prepareStatement("UPDATE stock SET qty = ? WHERE sku = ?")) {
+-                ps.setInt(1, row.qty() - qty);
+-                ps.setString(2, sku);
+-                ps.executeUpdate();
+-            }
+-            return true;
++        try (Connection c = db.get();
++             PreparedStatement ps = c.prepareStatement("UPDATE stock SET qty = qty - ? WHERE sku = ? AND qty >= ?")) {
++            ps.setInt(1, qty);
++            ps.setString(2, sku);
++            ps.setInt(3, qty);
++            return ps.executeUpdate() == 1;
+         } catch (SQLException e) {
+             throw new IllegalStateException(e);
+         }
+--- a/01-concurrency-consistency/l04-stock-concurrency/src/main/java/deepdive/c01/l04/OptimisticLockStockService.java
++++ b/01-concurrency-consistency/l04-stock-concurrency/src/main/java/deepdive/c01/l04/OptimisticLockStockService.java
+@@ -64,15 +64,22 @@
+     @Override
+     public boolean reserve(String sku, int qty) {
+         try (Connection c = db.get()) {
+-            StockTable.Row row = StockTable.read(c, sku, false);
+-            if (row == null || row.qty() < qty) return false;
+-            betweenReadAndWrite.run();
+-            try (PreparedStatement ps = c.prepareStatement("UPDATE stock SET qty = ? WHERE sku = ?")) {
+-                ps.setInt(1, row.qty() - qty);
+-                ps.setString(2, sku);
+-                ps.executeUpdate();
++            for (int attempt = 1; ; attempt++) {
++                StockTable.Row row = StockTable.read(c, sku, false);
++                if (row == null || row.qty() < qty) return false;
++                betweenReadAndWrite.run();
++                try (PreparedStatement ps = c.prepareStatement(
++                        "UPDATE stock SET qty = ?, version = version + 1 WHERE sku = ? AND version = ?")) {
++                    ps.setInt(1, row.qty() - qty);
++                    ps.setString(2, sku);
++                    ps.setInt(3, row.version());
++                    if (ps.executeUpdate() == 1) return true;
++                }
++                if (attempt >= MAX_ATTEMPTS) {
++                    throw new IllegalStateException("낙관 락 재시도 상한(" + MAX_ATTEMPTS + "번) 초과 — 같은 행에 경합이 너무 심하다: " + sku);
++                }
++                retries.incrementAndGet();
+             }
+-            return true;
+         } catch (SQLException e) {
+             throw new IllegalStateException(e);
+         }
+--- a/01-concurrency-consistency/l04-stock-concurrency/src/main/java/deepdive/c01/l04/PessimisticLockStockService.java
++++ b/01-concurrency-consistency/l04-stock-concurrency/src/main/java/deepdive/c01/l04/PessimisticLockStockService.java
+@@ -40,14 +40,24 @@
+     @Override
+     public boolean reserve(String sku, int qty) {
+         try (Connection c = db.get()) {
+-            StockTable.Row row = StockTable.read(c, sku, false);
+-            if (row == null || row.qty() < qty) return false;
+-            try (PreparedStatement ps = c.prepareStatement("UPDATE stock SET qty = ? WHERE sku = ?")) {
+-                ps.setInt(1, row.qty() - qty);
+-                ps.setString(2, sku);
+-                ps.executeUpdate();
++            c.setAutoCommit(false);
++            try {
++                StockTable.Row row = StockTable.read(c, sku, true);
++                if (row == null || row.qty() < qty) {
++                    c.rollback();
++                    return false;
++                }
++                try (PreparedStatement ps = c.prepareStatement("UPDATE stock SET qty = ? WHERE sku = ?")) {
++                    ps.setInt(1, row.qty() - qty);
++                    ps.setString(2, sku);
++                    ps.executeUpdate();
++                }
++                c.commit();
++                return true;
++            } catch (SQLException e) {
++                c.rollback();
++                throw new IllegalStateException(e);
+             }
+-            return true;
+         } catch (SQLException e) {
+             throw new IllegalStateException(e);
+         }
+--- a/01-concurrency-consistency/l04-stock-concurrency/src/test/java/deepdive/c01/l04/StockPredictTest.java
++++ b/01-concurrency-consistency/l04-stock-concurrency/src/test/java/deepdive/c01/l04/StockPredictTest.java
+@@ -53,7 +53,7 @@
+             b.update("UPDATE stock SET qty = ? WHERE sku = 'A'", seenByB - 1); // 1 - 1
+             Object finalQty = lab.one("SELECT qty FROM stock WHERE sku = 'A'");
+ 
+-            String 예측 = "?";
++            String 예측 = "0";
+             Predict.확인("A 도 B 도 \"성공\" 을 받았다 (2개 팔림). 최종 재고는? (처음 1 · 답: 숫자)", 예측, finalQty);
+         }
+     }
+@@ -73,8 +73,8 @@
+             int bRows = bUpdate.await(Duration.ofSeconds(5));
+             b.commit();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_행수 = "?";
++            String 예측_대기 = "true";
++            String 예측_행수 = "0";
+             Predict.확인("A 가 커밋하기 전, B 의 UPDATE 는 기다리나? (답: true / false)", 예측_대기, bWaited);
+             Predict.확인("A 커밋 뒤 B 의 UPDATE 영향 행 수는? (재고는 1 이었고 A 가 가져갔다 · 답: 숫자)", 예측_행수, bRows);
+         }
+@@ -94,8 +94,8 @@
+             b.commit();
+             Object finalQty = lab.one("SELECT qty FROM stock WHERE sku = 'A'");
+ 
+-            String 예측_행수 = "?";
+-            String 예측_재고 = "?";
++            String 예측_행수 = "1";
++            String 예측_재고 = "0";
+             Predict.확인("A 가 커밋 대신 ROLLBACK 하면 B 의 UPDATE 영향 행 수는? (답: 숫자)", 예측_행수, bRows);
+             Predict.확인("최종 재고는? (답: 숫자)", 예측_재고, finalQty);
+         }
+@@ -118,8 +118,8 @@
+             int bRows = bUpdate.await(Duration.ofSeconds(5));
+             b.commit();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_행수 = "?";
++            String 예측_대기 = "true";
++            String 예측_행수 = "0";
+             Predict.확인("A 가 커밋하기 전, B 의 UPDATE 는 기다리나? (답: true / false)", 예측_대기, bWaited);
+             Predict.확인("A 커밋 뒤 B 의 UPDATE 영향 행 수는? (답: 숫자)", 예측_행수, bRows);
+         }
+@@ -141,7 +141,7 @@
+             }
+             b.rollback();
+ 
+-            String 예측 = "?";
++            String 예측 = "에러 40001";
+             Predict.확인("B 의 UPDATE 는? (0행이 아니라…? · 답: \"성공\" 또는 \"에러 \" + SQLState 다섯 글자)", 예측, outcome);
+         }
+     }
+@@ -162,8 +162,8 @@
+             Object bSaw = bRead.await(Duration.ofSeconds(5));
+             b.rollback();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_값 = "?";
++            String 예측_대기 = "true";
++            String 예측_값 = "0";
+             Predict.확인("A 가 커밋하기 전, B 의 SELECT … FOR UPDATE 는 기다리나? (답: true / false)", 예측_대기, bWaited);
+             Predict.확인("A 가 qty 를 0 으로 바꾸고 커밋한 뒤, B 가 읽은 qty 는? (처음 1 · 답: 숫자)", 예측_값, bSaw);
+         }
+@@ -183,8 +183,8 @@
+             a.rollback();
+             b.rollback();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_값 = "?";
++            String 예측_대기 = "false";
++            String 예측_값 = "1";
+             Predict.확인("B 의 평범한 SELECT 는 A 의 락을 기다리나? (답: true / false)", 예측_대기, bWaited);
+             Predict.확인("B 가 읽은 qty 는? (A 는 0 으로 바꾸고 커밋 전 · 답: 숫자)", 예측_값, bSaw);
+         }
+@@ -204,7 +204,7 @@
+             a.rollback();
+             b.rollback();
+ 
+-            String 예측 = "?";
++            String 예측 = "false";
+             Predict.확인("A 는 SKU 'A' 를, B 는 SKU 'B' 를 차감한다. B 의 UPDATE 는 기다리나? (답: true / false)", 예측, bWaited);
+         }
+     }

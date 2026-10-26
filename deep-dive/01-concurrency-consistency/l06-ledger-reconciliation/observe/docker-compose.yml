@@ -1,0 +1,17 @@
+# compose 프로젝트 이름 — 없으면 폴더명(observe)이 되어 레슨끼리 컨테이너를 덮어쓴다
+name: deepdive-01-06
+# 손으로 관찰하는 용도. 테스트(Testcontainers)와는 별개의 컨테이너다.
+services:
+  pg:
+    image: postgres:16-alpine
+    container_name: deepdive-01.06-pg
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: lab
+    command: ["postgres", "-c", "deadlock_timeout=200ms", "-c", "log_lock_waits=on"]
+    ports: ["55437:5432"]
+    volumes:
+      # 스키마는 테스트가 쓰는 파일 그대로 — 둘이 어긋나지 않게
+      - ../src/main/resources/ledger-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro

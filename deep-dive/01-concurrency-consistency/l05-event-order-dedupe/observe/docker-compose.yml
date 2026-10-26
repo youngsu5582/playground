@@ -1,0 +1,14 @@
+# 손으로 관찰하는 용도. 테스트(Testcontainers)와는 별개의 컨테이너다.
+name: deepdive-01-05
+services:
+  pg:
+    image: postgres:16-alpine
+    container_name: deepdive-01.05-pg
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: lab
+    command: ["postgres", "-c", "deadlock_timeout=200ms", "-c", "log_lock_waits=on"]
+    ports: ["55436:5432"]
+    volumes:
+      - ./seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro

@@ -1,0 +1,266 @@
+--- a/01-concurrency-consistency/l06-ledger-reconciliation/src/main/java/deepdive/c01/l06/LedgerService.java
++++ b/01-concurrency-consistency/l06-ledger-reconciliation/src/main/java/deepdive/c01/l06/LedgerService.java
+@@ -1,5 +1,6 @@
+ package deepdive.c01.l06;
+ 
++import java.math.BigDecimal;
+ import java.sql.Connection;
+ import java.sql.PreparedStatement;
+ import java.sql.SQLException;
+@@ -51,35 +52,48 @@
+     public PostResult post(Transfer t) {
+         try (Connection c = db.get()) {
+             c.setAutoCommit(false);
+-            double fromBalance = balanceOf(c, t.from());
+-            double toBalance = balanceOf(c, t.to());
+-            double amount = t.amount().doubleValue();
+-            if (t.from() != 0 && fromBalance < amount) return PostResult.INSUFFICIENT;
+-            setBalance(c, t.from(), fromBalance - amount);
+-            setBalance(c, t.to(), toBalance + amount);
+-            insertLegs(c, t);
+-            c.commit();
+-            return PostResult.POSTED;
++            try {
++                if (!claim(c, t.txnId())) {
++                    c.rollback();
++                    return PostResult.DUPLICATE;
++                }
++                // 계좌 id 순서로 갱신 — 반대 방향 이체끼리 락을 엇갈려 잡지 않게
++                if (t.from() < t.to()) {
++                    addBalance(c, t.from(), t.amount().negate());
++                    addBalance(c, t.to(), t.amount());
++                } else {
++                    addBalance(c, t.to(), t.amount());
++                    addBalance(c, t.from(), t.amount().negate());
++                }
++                insertLegs(c, t);
++                c.commit();
++                return PostResult.POSTED;
++            } catch (SQLException e) {
++                c.rollback();
++                if (CHECK_VIOLATION.equals(e.getSQLState())) return PostResult.INSUFFICIENT;
++                throw e;
++            } catch (RuntimeException e) {
++                c.rollback();
++                throw e;
++            }
+         } catch (SQLException e) {
+             throw new IllegalStateException(e);
+         }
+     }
+ 
+-    private static double balanceOf(Connection c, int account) throws SQLException {
+-        try (PreparedStatement ps = c.prepareStatement("SELECT balance FROM account WHERE id = ?")) {
+-            ps.setInt(1, account);
+-            try (java.sql.ResultSet rs = ps.executeQuery()) {
+-                rs.next();
+-                return rs.getDouble(1);
+-            }
++    /** 거래 id 를 선점한다. 내가 처음이면 true, 이미 있으면 false (동시에 오면 먼저 온 쪽이 끝날 때까지 기다린다). */
++    private static boolean claim(Connection c, String txnId) throws SQLException {
++        try (PreparedStatement ps = c.prepareStatement("INSERT INTO posted_txn (txn_id) VALUES (?) ON CONFLICT DO NOTHING")) {
++            ps.setString(1, txnId);
++            return ps.executeUpdate() == 1;
+         }
+     }
+-    
+-    private static void setBalance(Connection c, int account, double balance) throws SQLException {
+-        try (PreparedStatement ps = c.prepareStatement("UPDATE account SET balance = ? WHERE id = ?")) {
+-            ps.setDouble(1, balance);
++
++    private static void addBalance(Connection c, int account, BigDecimal delta) throws SQLException {
++        try (PreparedStatement ps = c.prepareStatement("UPDATE account SET balance = balance + ? WHERE id = ?")) {
++            ps.setBigDecimal(1, delta);
+             ps.setInt(2, account);
+-            ps.executeUpdate();
++            if (ps.executeUpdate() != 1) throw new IllegalArgumentException("없는 계좌: " + account);
+         }
+     }
+ 
+--- a/01-concurrency-consistency/l06-ledger-reconciliation/src/main/java/deepdive/c01/l06/Reconciler.java
++++ b/01-concurrency-consistency/l06-ledger-reconciliation/src/main/java/deepdive/c01/l06/Reconciler.java
+@@ -1,6 +1,11 @@
+ package deepdive.c01.l06;
+ 
++import java.math.BigDecimal;
+ import java.sql.Connection;
++import java.sql.PreparedStatement;
++import java.sql.ResultSet;
++import java.sql.SQLException;
++import java.util.ArrayList;
+ import java.util.List;
+ import java.util.function.Supplier;
+ 
+@@ -40,7 +45,53 @@
+      * </ul>
+      */
+     public List<Mismatch> findMismatches() {
+-        return List.of();
++        try (Connection c = db.get()) {
++            List<Mismatch> found = new ArrayList<>();
++            internal(c, found);
++            external(c, found);
++            return found;
++        } catch (SQLException e) {
++            throw new IllegalStateException(e);
++        }
+     }
+ 
++    private static void internal(Connection c, List<Mismatch> found) throws SQLException {
++        String sql = """
++                SELECT COALESCE(a.id, l.account_id) AS account_id, a.id IS NULL AS no_account, a.balance, l.entries_sum
++                FROM account a
++                FULL OUTER JOIN (SELECT account_id, SUM(amount) AS entries_sum FROM ledger GROUP BY account_id) l
++                  ON l.account_id = a.id
++                WHERE a.id IS NULL OR a.balance <> COALESCE(l.entries_sum, 0)
++                ORDER BY 1""";
++        try (PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
++            while (rs.next()) {
++                String key = String.valueOf(rs.getInt("account_id"));
++                BigDecimal entriesSum = rs.getBigDecimal("entries_sum");
++                if (rs.getBoolean("no_account")) {
++                    found.add(new Mismatch(Mismatch.Kind.LEDGER_WITHOUT_ACCOUNT, key, null, entriesSum));
++                } else {
++                    found.add(new Mismatch(Mismatch.Kind.BALANCE_NOT_MATCH, key, rs.getBigDecimal("balance"),
++                            entriesSum == null ? BigDecimal.ZERO : entriesSum));
++                }
++            }
++        }
++    }
++
++    private static void external(Connection c, List<Mismatch> found) throws SQLException {
++        String sql = """
++                SELECT COALESCE(o.txn_id, e.txn_id) AS txn_id, o.amount AS ours, e.amount AS theirs
++                FROM (SELECT txn_id, amount FROM ledger WHERE amount > 0) o
++                FULL OUTER JOIN external_statement e ON e.txn_id = o.txn_id
++                WHERE o.txn_id IS NULL OR e.txn_id IS NULL OR o.amount <> e.amount
++                ORDER BY 1""";
++        try (PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
++            while (rs.next()) {
++                BigDecimal ours = rs.getBigDecimal("ours");
++                BigDecimal theirs = rs.getBigDecimal("theirs");
++                Mismatch.Kind kind = ours == null ? Mismatch.Kind.THEIRS_ONLY
++                        : theirs == null ? Mismatch.Kind.OURS_ONLY : Mismatch.Kind.AMOUNT_DIFFERS;
++                found.add(new Mismatch(kind, rs.getString("txn_id"), ours, theirs));
++            }
++        }
++    }
+ }
+--- a/01-concurrency-consistency/l06-ledger-reconciliation/src/test/java/deepdive/c01/l06/LedgerPredictTest.java
++++ b/01-concurrency-consistency/l06-ledger-reconciliation/src/test/java/deepdive/c01/l06/LedgerPredictTest.java
+@@ -57,8 +57,8 @@
+             Object floatEqual = a.one("SELECT 0.1::float8 + 0.2::float8 = 0.3::float8");
+             Object numericEqual = a.one("SELECT 0.1::numeric + 0.2::numeric = 0.3::numeric");
+ 
+-            String 예측_float = "?";
+-            String 예측_numeric = "?";
++            String 예측_float = "false";
++            String 예측_numeric = "true";
+             Predict.확인("float8 로 0.1 + 0.2 = 0.3 은 참인가? (답: true / false)", 예측_float, floatEqual);
+             Predict.확인("numeric 으로 0.1 + 0.2 = 0.3 은 참인가? (답: true / false)", 예측_numeric, numericEqual);
+         }
+@@ -73,8 +73,8 @@
+             Object positive = a.one("SELECT v FROM money_box WHERE v > 0");
+             Object negative = a.one("SELECT v FROM money_box WHERE v < 0");
+ 
+-            String 예측_양수 = "?";
+-            String 예측_음수 = "?";
++            String 예측_양수 = "1.01";
++            String 예측_음수 = "-1.01";
+             Predict.확인("1.005 를 넣고 읽으면 저장된 값은? (오류 없이 들어간다 · 답: 숫자 그대로, 예 1.23)", 예측_양수, positive);
+             Predict.확인("-1.005 를 넣고 읽으면 저장된 값은? (답: 숫자 그대로)", 예측_음수, negative);
+         }
+@@ -87,8 +87,8 @@
+             String 열_자리 = outcome(() -> a.update("INSERT INTO money_box VALUES (9999999999.99)"));
+             String 열한_자리 = outcome(() -> a.update("INSERT INTO money_box VALUES (10000000000)"));
+ 
+-            String 예측_열자리 = "?";
+-            String 예측_열한자리 = "?";
++            String 예측_열자리 = "성공";
++            String 예측_열한자리 = "에러 22003";
+             Predict.확인("9999999999.99 (정수부 10 자리) 를 넣으면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_열자리, 열_자리);
+             Predict.확인("10000000000 (정수부 11 자리) 를 넣으면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_열한자리, 열한_자리);
+         }
+@@ -104,8 +104,8 @@
+             String update = outcome(() -> a.update("UPDATE account SET balance = balance - 150 WHERE id = 1"));
+             String next = outcome(() -> a.one("SELECT balance FROM account WHERE id = 1"));
+ 
+-            String 예측_UPDATE = "?";
+-            String 예측_다음문장 = "?";
++            String 예측_UPDATE = "에러 23514";
++            String 예측_다음문장 = "에러 25P02";
+             Predict.확인("트랜잭션 안에서 이 UPDATE 를 실행하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_UPDATE, update);
+             Predict.확인("에러를 받은 그 트랜잭션에서 SELECT 를 이어서 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_다음문장, next);
+         }
+@@ -120,9 +120,9 @@
+             String commit = outcome(a::commit);
+             Object rows = a.one("SELECT count(*) FROM ledger WHERE txn_id = 'T1'");
+ 
+-            String 예측_INSERT = "?";
+-            String 예측_COMMIT = "?";
+-            String 예측_행수 = "?";
++            String 예측_INSERT = "성공";
++            String 예측_COMMIT = "에러 P0001";
++            String 예측_행수 = "0";
+             Predict.확인("+50 한 줄만 INSERT 하면? (한 거래의 다리 합이 0 이어야 한다는 지연 제약 트리거가 있다 · 답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_INSERT, insert);
+             Predict.확인("이어서 COMMIT 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_COMMIT, commit);
+             Predict.확인("그 뒤 ledger 에 txn_id = 'T1' 인 행은 몇 개? (답: 숫자)", 예측_행수, rows);
+@@ -142,8 +142,8 @@
+             b.update("SET CONSTRAINTS ALL IMMEDIATE");
+             String insertNow = outcome(() -> b.update("INSERT INTO ledger (txn_id, account_id, amount) VALUES ('T2', 1, 50.00)"));
+ 
+-            String 예측_SET = "?";
+-            String 예측_INSERT = "?";
++            String 예측_SET = "에러 P0001";
++            String 예측_INSERT = "에러 P0001";
+             Predict.확인("A: 한 줄만 INSERT 한 뒤 SET CONSTRAINTS ALL IMMEDIATE 를 실행하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_SET, setNow);
+             Predict.확인("B: 먼저 SET CONSTRAINTS ALL IMMEDIATE 를 하고 한 줄만 INSERT 하면, 그 INSERT 는? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_INSERT, insertNow);
+         }
+@@ -159,9 +159,9 @@
+             String truncate = outcome(() -> a.update("TRUNCATE ledger"));
+             Object rows = a.one("SELECT count(*) FROM ledger");
+ 
+-            String 예측_UPDATE = "?";
+-            String 예측_TRUNCATE = "?";
+-            String 예측_행수 = "?";
++            String 예측_UPDATE = "에러 P0001";
++            String 예측_TRUNCATE = "성공";
++            String 예측_행수 = "0";
+             Predict.확인("ledger 에 BEFORE UPDATE OR DELETE 행 트리거가 있다. UPDATE 를 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_UPDATE, update);
+             Predict.확인("같은 테이블을 TRUNCATE 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_TRUNCATE, truncate);
+             Predict.확인("그 뒤 ledger 의 행 수는? (처음엔 2 · 답: 숫자)", 예측_행수, rows);
+@@ -176,9 +176,9 @@
+             String plain = outcome(() -> a.update("INSERT INTO posted_txn (txn_id) VALUES ('D1')"));
+             String legs = outcome(() -> a.update("INSERT INTO ledger (txn_id, account_id, amount) VALUES ('D1', 1, 100.00), ('D1', 0, -100.00)"));
+ 
+-            String 예측_충돌무시 = "?";
+-            String 예측_그냥 = "?";
+-            String 예측_원장 = "?";
++            String 예측_충돌무시 = "0";
++            String 예측_그냥 = "에러 23505";
++            String 예측_원장 = "에러 23505";
+             Predict.확인("ON CONFLICT DO NOTHING 으로 D1 을 넣으면 영향 행 수는? (답: 숫자)", 예측_충돌무시, skipped);
+             Predict.확인("ON CONFLICT 없이 D1 을 넣으면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_그냥, plain);
+             Predict.확인("선점 없이 원장에 D1 의 두 다리를 또 넣으면? ledger 에는 UNIQUE (txn_id, account_id) 가 있다 (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_원장, legs);
+@@ -194,8 +194,8 @@
+             Object floatTotal = a.one("SELECT sum(0.1::float8) = 1 FROM generate_series(1, 10)");
+             Object numericTotal = a.one("SELECT sum(0.1::numeric) = 1 FROM generate_series(1, 10)");
+ 
+-            String 예측_float = "?";
+-            String 예측_numeric = "?";
++            String 예측_float = "false";
++            String 예측_numeric = "true";
+             Predict.확인("0.1 (float8) 을 열 번 더한 합은 1 과 같은가? (대사에서 '합이 맞나' 를 = 로 비교한다면 · 답: true / false)", 예측_float, floatTotal);
+             Predict.확인("0.1 (numeric) 을 열 번 더한 합은 1 과 같은가? (답: true / false)", 예측_numeric, numericTotal);
+         }
+@@ -220,8 +220,8 @@
+                     FULL OUTER JOIN (SELECT account_id, sum(amount) AS s FROM ledger GROUP BY account_id) l ON l.account_id = a.id
+                     WHERE a.id IS NULL OR a.balance <> COALESCE(l.s, 0)""");
+ 
+-            String 예측_INNER = "?";
+-            String 예측_FULL = "?";
++            String 예측_INNER = "1";
++            String 예측_FULL = "3";
+             Predict.확인("INNER JOIN 으로 \"잔고 <> 원장 합\" 인 계좌를 세면 몇 건? (답: 숫자)", 예측_INNER, inner);
+             Predict.확인("FULL OUTER JOIN + COALESCE(합, 0) 으로 (계좌가 없는 경우 포함) 세면 몇 건? (답: 숫자)", 예측_FULL, full);
+         }

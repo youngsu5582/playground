@@ -1,0 +1,10 @@
+.gradle/
+build/
+bin/
+out/
+.classpath
+.project
+.settings/
+__pycache__/
+*.pyc
+.marked/

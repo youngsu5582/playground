@@ -1,0 +1,128 @@
+--- a/01-concurrency-consistency/l02-row-locks-deadlock/src/main/java/deepdive/c01/l02/JobQueue.java
++++ b/01-concurrency-consistency/l02-row-locks-deadlock/src/main/java/deepdive/c01/l02/JobQueue.java
+@@ -53,7 +53,7 @@
+     public Optional<Long> claimNext(String worker) {
+         try (Connection c = db.get()) {
+             c.setAutoCommit(false);
+-            String sql = "SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1";
++            String sql = "SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED";
+             Long id = null;
+             try (PreparedStatement ps = c.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                 if (rs.next()) id = rs.getLong(1);
+--- a/01-concurrency-consistency/l02-row-locks-deadlock/src/main/java/deepdive/c01/l02/TransferService.java
++++ b/01-concurrency-consistency/l02-row-locks-deadlock/src/main/java/deepdive/c01/l02/TransferService.java
+@@ -52,8 +52,8 @@
+     public boolean transfer(long from, long to, long amount) {
+         try (Connection c = db.get()) {
+             c.setAutoCommit(false);
+-            long first = from;
+-            long second = to;
++            long first = Math.min(from, to);
++            long second = Math.max(from, to);
+             lock(c, first);
+             pause();
+             lock(c, second);
+--- a/01-concurrency-consistency/l02-row-locks-deadlock/src/test/java/deepdive/c01/l02/RowLockPredictTest.java
++++ b/01-concurrency-consistency/l02-row-locks-deadlock/src/test/java/deepdive/c01/l02/RowLockPredictTest.java
+@@ -62,7 +62,7 @@
+             bUpdate.await(Duration.ofSeconds(5));
+             b.commit();
+ 
+-            String 예측 = "?";
++            String 예측 = "true";
+             Predict.확인("A 가 커밋하기 전, B 의 UPDATE 는 기다리나? (A 는 행을 읽고 잠갔을 뿐 고치지 않았다 · 답: true / false)", 예측, bWaited);
+         }
+     }
+@@ -81,8 +81,8 @@
+             a.rollback();
+             b.rollback();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_값 = "?";
++            String 예측_대기 = "false";
++            String 예측_값 = "pending";
+             Predict.확인("B 의 SELECT 는 A 가 끝나길 기다리나? (답: true / false)", 예측_대기, bWaited);
+             Predict.확인("B 가 읽은 status 는? (A 는 running 으로 바꾸고 커밋 전 · 답: pending / running)", 예측_값, bSaw);
+         }
+@@ -114,8 +114,8 @@
+             a.rollback();
+             b.rollback();
+ 
+-            String 예측_NOWAIT = "?";
+-            String 예측_다음 = "?";
++            String 예측_NOWAIT = "에러 55P03";
++            String 예측_다음 = "에러 25P02";
+             Predict.확인("B 의 FOR UPDATE NOWAIT 는? (답: \"성공\" 또는 \"에러 \" + SQLState — 예: 에러 23505)", 예측_NOWAIT, nowait);
+             Predict.확인("같은 트랜잭션에서 B 의 다음 문장 SELECT 1 은? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_다음, next);
+         }
+@@ -140,7 +140,7 @@
+             a.rollback();
+             Timeline.note("B 가 포기하기까지 걸린 시간 " + waitedMillis + "ms");
+ 
+-            String 예측 = "?";
++            String 예측 = "에러 55P03";
+             Predict.확인("B 의 UPDATE 는? (답: \"성공\" 또는 \"에러 \" + SQLState — Q03 의 NOWAIT 와 비교)", 예측, outcome);
+         }
+     }
+@@ -154,7 +154,7 @@
+             Object picked = b.one("SELECT id FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED");
+             a.rollback();
+ 
+-            String 예측 = "?";
++            String 예측 = "2";
+             Predict.확인("B 가 집은 작업 id 는? (pending 은 1·2·3 · 답: 숫자)", 예측, picked);
+         }
+     }
+@@ -172,8 +172,8 @@
+             Object picked = bPick.await(Duration.ofSeconds(5));
+             b.rollback();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_결과 = "?";
++            String 예측_대기 = "true";
++            String 예측_결과 = "2";
+             Predict.확인("A 가 커밋하기 전, B 는 기다리나? (답: true / false)", 예측_대기, bWaited);
+             Predict.확인("A 가 커밋한 뒤 B 가 받은 id 는? (1번은 이제 running · 답: 숫자 / 없으면 \"없음\")", 예측_결과, picked == null ? "없음" : picked);
+         }
+@@ -199,8 +199,8 @@
+             cUpdate.await(Duration.ofSeconds(5));
+             c.rollback();
+ 
+-            String 예측_공유 = "?";
+-            String 예측_갱신 = "?";
++            String 예측_공유 = "false";
++            String 예측_갱신 = "true";
+             Predict.확인("A 가 FOR SHARE 로 잡은 행을 B 도 FOR SHARE 하면 기다리나? (답: true / false)", 예측_공유, shareWaited);
+             Predict.확인("A · B 가 FOR SHARE 로 잡은 행을 C 가 UPDATE 하면 기다리나? (답: true / false)", 예측_갱신, updateWaited);
+         }
+@@ -224,8 +224,8 @@
+             cDelete.await(Duration.ofSeconds(5));
+             c.rollback();
+ 
+-            String 예측_이름 = "?";
+-            String 예측_삭제 = "?";
++            String 예측_이름 = "false";
++            String 예측_삭제 = "true";
+             Predict.확인("B 의 UPDATE parent SET name … (키가 아닌 열) 는 기다리나? (답: true / false)", 예측_이름, renameWaited);
+             Predict.확인("B 가 이미 커밋한 뒤, C 의 DELETE FROM parent WHERE id = 1 은 기다리나? (남은 건 A 의 미커밋 자식 INSERT 뿐 · 답: true / false)", 예측_삭제, deleteWaited);
+         }
+@@ -251,8 +251,8 @@
+             bUpdate.await(Duration.ofSeconds(5));
+             b.rollback();
+ 
+-            String 예측_대기 = "?";
+-            String 예측_차단 = "?";
++            String 예측_대기 = "Lock/transactionid";
++            String 예측_차단 = "true";
+             Predict.확인("pg_stat_activity 에서 B 의 wait_event_type/wait_event 는? (답: 형식 Type/event — 예: IO/DataFileRead)", 예측_대기, waitEvent);
+             Predict.확인("pg_blocking_pids(B 의 pid) 는 A 의 pid 하나만 담고 있나? (답: true / false)", 예측_차단, blockedByA);
+         }
+@@ -290,7 +290,7 @@
+             b.rollback();
+             Timeline.note("엔진이 끊은 쪽: " + failedSession + " (" + failedState + ") — 누가 끊기는지는 보장이 아니다. 출력을 보고 NOTES 에 적는다");
+ 
+-            String 예측 = "?";
++            String 예측 = "40P01";
+             Predict.확인("한쪽 세션이 엔진에게 끊긴다. 그 에러의 SQLState 는? (답: SQLState 다섯 글자)", 예측, failedState);
+         }
+     }
