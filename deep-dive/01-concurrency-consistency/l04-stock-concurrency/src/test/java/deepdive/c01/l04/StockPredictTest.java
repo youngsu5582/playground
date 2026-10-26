@@ -53,7 +53,9 @@ class StockPredictTest {
             b.update("UPDATE stock SET qty = ? WHERE sku = 'A'", seenByB - 1); // 1 - 1
             Object finalQty = lab.one("SELECT qty FROM stock WHERE sku = 'A'");
 
-            String 예측 = "?";
+            // 각각의 트랜잭션이, 1 -1 = 0 을 실행하므로
+            // 2개가 차감이 되었어도 0으로 된다.
+            String 예측 = "0";
             Predict.확인("A 도 B 도 \"성공\" 을 받았다 (2개 팔림). 최종 재고는? (처음 1 · 답: 숫자)", 예측, finalQty);
         }
     }
@@ -73,8 +75,11 @@ class StockPredictTest {
             int bRows = bUpdate.await(Duration.ofSeconds(5));
             b.commit();
 
-            String 예측_대기 = "?";
-            String 예측_행수 = "?";
+            // B는 A가 WHERE 문 기반 락을 잡고 있으므로 대기한다.
+            String 예측_대기 = "true";
+
+            // B는 Where 문 조건을 만족하지 못하기 때문에 0을 반환한다.
+            String 예측_행수 = "0";
             Predict.확인("A 가 커밋하기 전, B 의 UPDATE 는 기다리나? (답: true / false)", 예측_대기, bWaited);
             Predict.확인("A 커밋 뒤 B 의 UPDATE 영향 행 수는? (재고는 1 이었고 A 가 가져갔다 · 답: 숫자)", 예측_행수, bRows);
         }
@@ -94,8 +99,10 @@ class StockPredictTest {
             b.commit();
             Object finalQty = lab.one("SELECT qty FROM stock WHERE sku = 'A'");
 
-            String 예측_행수 = "?";
-            String 예측_재고 = "?";
+            // A 가 잡고있는 동안은 대기하지만, rollback 되면 쿼리를 실행한다.
+            // -> 조건을 만족해서 UPDATE 가 발생하고 1을 반환한다.
+            String 예측_행수 = "1";
+            String 예측_재고 = "0";
             Predict.확인("A 가 커밋 대신 ROLLBACK 하면 B 의 UPDATE 영향 행 수는? (답: 숫자)", 예측_행수, bRows);
             Predict.확인("최종 재고는? (답: 숫자)", 예측_재고, finalQty);
         }
@@ -118,8 +125,10 @@ class StockPredictTest {
             int bRows = bUpdate.await(Duration.ofSeconds(5));
             b.commit();
 
-            String 예측_대기 = "?";
-            String 예측_행수 = "?";
+            // A가 수행하는 동안, B는 대기한다.
+            // -> B는 A가 작업을 수행하며 버전을 올렸기 때문에 조건을 만족하지 못한다.
+            String 예측_대기 = "true";
+            String 예측_행수 = "0";
             Predict.확인("A 가 커밋하기 전, B 의 UPDATE 는 기다리나? (답: true / false)", 예측_대기, bWaited);
             Predict.확인("A 커밋 뒤 B 의 UPDATE 영향 행 수는? (답: 숫자)", 예측_행수, bRows);
         }
@@ -141,7 +150,14 @@ class StockPredictTest {
             }
             b.rollback();
 
-            String 예측 = "?";
+            // ⭐격리 수준에 따라 결과가 달라진다.
+            // REPEATABLE_READ 는 처음 실행하는 시점에 스냅샷을 둔다. (B 는 version 이 0인 상태로 고정)
+            // A가 update 를 하며, 스냅샷과 현재 상태가 달라진다.
+            // -> could not serialize access due to concurrent update
+
+            // READ_COMMITTED 일 시, B의 UPDATE 가 데이터를 바꾸지 않고 + 0행 갱신 정상 종료한다.
+            //  - UPDATE 를 할 때 다시 새로운 스냅샷을 조회
+            String 예측 = "에러" + "40001";
             Predict.확인("B 의 UPDATE 는? (0행이 아니라…? · 답: \"성공\" 또는 \"에러 \" + SQLState 다섯 글자)", 예측, outcome);
         }
     }
@@ -162,8 +178,8 @@ class StockPredictTest {
             Object bSaw = bRead.await(Duration.ofSeconds(5));
             b.rollback();
 
-            String 예측_대기 = "?";
-            String 예측_값 = "?";
+            String 예측_대기 = "true";
+            String 예측_값 = "0";
             Predict.확인("A 가 커밋하기 전, B 의 SELECT … FOR UPDATE 는 기다리나? (답: true / false)", 예측_대기, bWaited);
             Predict.확인("A 가 qty 를 0 으로 바꾸고 커밋한 뒤, B 가 읽은 qty 는? (처음 1 · 답: 숫자)", 예측_값, bSaw);
         }
@@ -183,8 +199,9 @@ class StockPredictTest {
             a.rollback();
             b.rollback();
 
-            String 예측_대기 = "?";
-            String 예측_값 = "?";
+            // A가 X Lock 이므로, Select 는 대기하지 않고 실행된다.
+            String 예측_대기 = "false";
+            String 예측_값 = "1";
             Predict.확인("B 의 평범한 SELECT 는 A 의 락을 기다리나? (답: true / false)", 예측_대기, bWaited);
             Predict.확인("B 가 읽은 qty 는? (A 는 0 으로 바꾸고 커밋 전 · 답: 숫자)", 예측_값, bSaw);
         }
@@ -204,7 +221,8 @@ class StockPredictTest {
             a.rollback();
             b.rollback();
 
-            String 예측 = "?";
+            // 2개는 다르므로, 서로 기다리지 않는다.
+            String 예측 = "false";
             Predict.확인("A 는 SKU 'A' 를, B 는 SKU 'B' 를 차감한다. B 의 UPDATE 는 기다리나? (답: true / false)", 예측, bWaited);
         }
     }
