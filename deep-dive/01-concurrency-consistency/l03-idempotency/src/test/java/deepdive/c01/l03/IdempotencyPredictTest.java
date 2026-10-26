@@ -70,7 +70,8 @@ class IdempotencyPredictTest {
             b.commit();
             Object rows = lab.one("SELECT count(*) FROM loose WHERE key = 'pay-1'");
 
-            String 예측 = "?";
+            // 두 곳에서 동시에 INSERT 가 발생한다.
+            String 예측 = "2";
             Predict.확인("두 세션이 모두 '없네' 를 보고 INSERT 했다. key = 'pay-1' 인 행은 몇 개? (답: 숫자)", 예측, rows);
         }
     }
@@ -81,13 +82,19 @@ class IdempotencyPredictTest {
         try (Session a = lab.session("A")) {
             String outcome = outcome(() -> a.update("INSERT INTO idem (key, payload) VALUES ('k1', 'second')")); // autocommit
 
-            String 예측 = "?";
+            // DB 단에서 일관성을 지킨다.
+            // 23505 : duplicate key value violates unique constraint ...
+            String 예측 = "에러23505";
             Predict.확인("이미 k1 이 있다. 같은 키로 INSERT 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측, outcome);
         }
     }
 
     // ── 2. 같은 키가 동시에 오면 ────────────────────────────────
-
+    // B는 A의 결과를 기다린다.
+    // PostgreSQL: 유니크 인덱스에 미커밋 + 충돌 행을 발견하면
+    // A 트랜잭션 종료를 기다린 뒤 재검사
+    // MySQL: A의 INSERT가 유니크 인덱스에 잡은 X lock 때문에
+    // B가 대기한다.
     @Test
     void Q03_처리_중인_같은_키를_INSERT_하면_기다리나() {
         Timeline.reset("Q03 A 가 k2 를 INSERT 하고 커밋 전 — B 도 k2 를 INSERT");
@@ -100,7 +107,10 @@ class IdempotencyPredictTest {
             a.commit();
             outcome(() -> bInsert.await(Duration.ofSeconds(5))); // 뒷정리 — 결과는 Q04
 
-            String 예측 = "?";
+            // A가 커밋을 하지 않았어도, INSERT 구문이 들어가고 유니크 인덱스에도 엔트리가 생성된다.
+            // 행의 생성 트랜잭션(A) 이 진행 중임을 확인
+            // -> 결과를 기다림.
+            String 예측 = "true";
             Predict.확인("A 가 커밋하기 전, B 의 INSERT 는 기다리나? 바로 에러가 나나? (답: true = 기다린다 / false)", 예측, bWaited);
         }
     }
@@ -117,7 +127,8 @@ class IdempotencyPredictTest {
             a.commit();
             String outcome = outcome(() -> bInsert.await(Duration.ofSeconds(5)));
 
-            String 예측 = "?";
+            // A가 성공적으로 커밋 되었으니, B는 에러 처리
+            String 예측 = "에러23505";
             Predict.확인("A 가 커밋한 뒤 B 의 INSERT 는? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측, outcome);
         }
     }
@@ -136,8 +147,8 @@ class IdempotencyPredictTest {
             b.commit();
             Object payload = lab.one("SELECT payload FROM idem WHERE key = 'k2'");
 
-            String 예측_결과 = "?";
-            String 예측_내용 = "?";
+            String 예측_결과 = "성공";
+            String 예측_내용 = "from B";
             Predict.확인("A 가 롤백한 뒤 B 의 INSERT 는? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측_결과, outcome);
             Predict.확인("B 가 커밋한 뒤 k2 의 payload 는? (답: from A / from B)", 예측_내용, payload);
         }
@@ -153,8 +164,10 @@ class IdempotencyPredictTest {
             List<Map<String, Object>> returned =
                     a.query("INSERT INTO idem (key, payload) VALUES ('k1', 'third') ON CONFLICT (key) DO NOTHING RETURNING key");
 
-            String 예측_영향 = "?";
-            String 예측_반환 = "?";
+            // DO NOTHING 은 아무것도 하지 않는다.
+            // 영향을 받은게 없으므로, 0을 반환
+            String 예측_영향 = "0";
+            String 예측_반환 = "0";
             Predict.확인("이미 k1 이 있다. DO NOTHING 으로 INSERT 하면 영향 행 수는? (답: 숫자)", 예측_영향, affected);
             Predict.확인("같은 INSERT 에 RETURNING key 를 붙이면 돌려받는 행은 몇 개? (답: 숫자)", 예측_반환, returned.size());
         }
@@ -174,8 +187,9 @@ class IdempotencyPredictTest {
             int affected = bInsert.await(Duration.ofSeconds(5));
             b.commit();
 
-            String 예측_대기 = "?";
-            String 예측_영향 = "?";
+            // DO NOTHING 이더라도, 트랜잭션은 대기한다.
+            String 예측_대기 = "true";
+            String 예측_영향 = "0";
             Predict.확인("A 가 커밋하기 전, B 의 DO NOTHING INSERT 는 기다리나? (DO NOTHING 이니 바로 0행?) (답: true / false)", 예측_대기, bWaited);
             Predict.확인("A 가 커밋한 뒤, B 의 영향 행 수는? (답: 숫자)", 예측_영향, affected);
         }
@@ -192,8 +206,10 @@ class IdempotencyPredictTest {
             Object payload = rows.getFirst().get("payload");
             Object hits = rows.getFirst().get("hits");
 
-            String 예측_내용 = "?";
-            String 예측_횟수 = "?";
+            // 충돌 시, 기존 행에 변경을 적용하진 않고 - second
+            // hits + 1 UPDATE 만 수행한다.
+            String 예측_내용 = "first";
+            String 예측_횟수 = "2";
             Predict.확인("k1 은 ('first', hits 1) 이다. RETURNING payload 는? (답: first / second)", 예측_내용, payload);
             Predict.확인("RETURNING hits 는? (답: 숫자)", 예측_횟수, hits);
         }
@@ -210,7 +226,9 @@ class IdempotencyPredictTest {
             String next = outcome(() -> a.one("SELECT payload FROM idem WHERE key = 'k1'"));
             a.rollback();
 
-            String 예측 = "?";
+            // 이미 23505 로 충돌 발생
+            // -> 트랜잭션이 aborted 로 기록, 이후 select 도 에러 발생
+            String 예측 = "에러" + "25P02";
             Predict.확인("에러를 잡고 같은 트랜잭션에서 SELECT 를 이어서 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측, next);
         }
     }
@@ -226,7 +244,8 @@ class IdempotencyPredictTest {
             String next = outcome(() -> a.one("SELECT payload FROM idem WHERE key = 'k1'"));
             a.rollback();
 
-            String 예측 = "?";
+            // save point 까지만 롤백하고, 그 다음 쿼리는 정상적 진행
+            String 예측 = "성공";
             Predict.확인("ROLLBACK TO SAVEPOINT 뒤에 SELECT 를 이어서 하면? (답: \"성공\" 또는 \"에러 \" + SQLState)", 예측, next);
         }
     }
