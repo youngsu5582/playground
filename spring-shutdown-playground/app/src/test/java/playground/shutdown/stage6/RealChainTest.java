@@ -22,7 +22,6 @@ import playground.shutdown.timeline.Timeline;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static playground.shutdown.support.Predict.todo;
 import static playground.shutdown.support.TimelineQuery.happened;
 import static playground.shutdown.support.TimelineQuery.result;
 
@@ -188,14 +187,16 @@ class RealChainTest {
         assertThat(happened("  produce 실패 처리")).isEqualTo(true);
         // -> DB 처리는 destory 시점에 남아있으므로, 성공한다.
         assertThat(result("produce markFailed")).isEqualTo(Outcome.SUCCESS);
-//
-//        // Q3 종료 뒤 DB 에 이 요청의 job 행은 몇 건이고, 요청 상태는 무엇인가? (보기: RequestStatus)
-//        assertThat(ChainInfra.jobCount(requestId)).isEqualTo(todo());
-//        assertThat(ChainInfra.requestStatus(requestId)).isEqualTo(todo());
-//
-//        // Q4 종료 뒤 사용자 대기열(Redis) 길이와 Rabbit 큐의 메시지 수는?
-//        assertThat(ChainInfra.redisLength(USER)).isEqualTo(todo());
-//        assertThat(ChainInfra.rabbitDepth()).isEqualTo(todo());
+
+        // Q3 종료 뒤 DB 에 이 요청의 job 행은 몇 건이고, 요청 상태는 무엇인가? (보기: RequestStatus)
+        // -> (실측) job 은 종료 전에 커밋된 그대로 3건, produce 의 catch 가 FAILED 를 남겼다.
+        assertThat(ChainInfra.jobCount(requestId)).isEqualTo(3);
+        assertThat(ChainInfra.requestStatus(requestId)).isEqualTo(RequestStatus.FAILED);
+
+        // Q4 종료 뒤 사용자 대기열(Redis) 길이와 Rabbit 큐의 메시지 수는?
+        // -> (실측) RPUSH 가 실패했으니 대기열도 큐도 비어 있다.
+        assertThat(ChainInfra.redisLength(USER)).isEqualTo(0);
+        assertThat(ChainInfra.rabbitDepth()).isEqualTo(0);
     }
 
     /**
