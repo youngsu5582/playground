@@ -139,8 +139,10 @@ class ResourcesDuringShutdownTest {
         // 상황: T-07d 와 같지만 drain 이 IdleDrain 이다. probe 는 "② drain(idle 대기) 시작" 에서 깨어난다
         runProbe(IdleDrainConfig.class, "② drain(idle 대기) 시작");
 
-        assertThat(result("redis")).isEqualTo(Outcome.SUCCESS);   // Q1 Redis 는
-//        assertThat(order("  probe 끝", "② redis(phase 0) stop")).isEqualTo(todo());   // Q2 probe 가 끝나는 건 Redis 가 멈추기 전인가 후인가
+        // Q1 Redis 는 닫히지 않았으므로 성공한다.
+        assertThat(result("redis")).isEqualTo(Outcome.SUCCESS);
+        // Redis 는 Probe 가 끝날 때 까지 대기하므로, Before
+        assertThat(order("  probe 끝", "② redis(phase 0) stop")).isEqualTo(Order.BEFORE);
     }
 
     /**

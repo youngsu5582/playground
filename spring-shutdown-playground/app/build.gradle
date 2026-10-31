@@ -30,6 +30,14 @@ dependencies {
     testImplementation 'org.testcontainers:testcontainers:1.21.4'
     testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
 
+    // stage6 에서만 쓴다: 진짜 Redis · RabbitMQ · PostgreSQL 위에서 "커밋 → 다음 @Async" 체인
+    testImplementation 'org.springframework:spring-jdbc:6.2.19'             // spring-tx 포함 (@Transactional · @TransactionalEventListener)
+    testImplementation 'org.springframework.amqp:spring-rabbit:3.2.11'
+    testImplementation 'com.zaxxer:HikariCP:6.3.3'
+    testImplementation 'org.postgresql:postgresql:42.7.11'
+    testImplementation 'org.testcontainers:rabbitmq:1.21.4'
+    testImplementation 'org.testcontainers:postgresql:1.21.4'
+
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core:3.27.2'
@@ -55,7 +63,7 @@ tasks.named('test', Test) {
 
 // 스테이지별 실행: ./gradlew s1  (= --tests 'playground.shutdown.stage1.*')
 // 타임라인을 눈으로 보려고 표준 출력을 그대로 보여 준다.
-['1', '2', '3', '4', '5'].each { n ->
+['1', '2', '3', '4', '5', '6'].each { n ->
     tasks.register("s${n}", Test) {
         group = 'verification'
         description = "stage${n} 테스트만 실행"
